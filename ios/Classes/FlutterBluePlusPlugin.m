@@ -60,6 +60,11 @@ static CBCentralManager *toOuterCentralManager;
   [stateChannel setStreamHandler:stateStreamHandler];
   instance.stateStreamHandler = stateStreamHandler;
 
+  if (self.centralManager == nil) {
+    self.centralManager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
+    toOuterCentralManager = self.centralManager;
+  }
+
   [registrar addMethodCallDelegate:instance channel:channel];
 }
 
@@ -73,10 +78,6 @@ static CBCentralManager *toOuterCentralManager;
     _logLevel = (LogLevel)[logLevelIndex integerValue];
     result(nil);
     return;
-  }
-  if (self.centralManager == nil) {
-    self.centralManager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
-    toOuterCentralManager = self.centralManager;
   }
   if ([@"state" isEqualToString:call.method]) {
     FlutterStandardTypedData *data = [self toFlutterData:[self toBluetoothStateProto:self->_centralManager.state]];
