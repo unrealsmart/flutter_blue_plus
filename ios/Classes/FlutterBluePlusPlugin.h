@@ -8,6 +8,7 @@
 #define NAMESPACE @"flutter_blue_plus"
 
 @interface FlutterBluePlusPlugin : NSObject<FlutterPlugin, CBCentralManagerDelegate, CBPeripheralDelegate>
++ (CBCentralManager *)getCBCentralManager;
 @end
 
 @interface FlutterBluePlusStreamHandler : NSObject<FlutterStreamHandler>

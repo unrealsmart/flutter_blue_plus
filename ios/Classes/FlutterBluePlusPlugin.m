@@ -29,6 +29,8 @@ typedef NS_ENUM(NSUInteger, LogLevel) {
   debug = 7
 };
 
+static CBCentralManager *toOuterCentralManager;
+
 @interface FlutterBluePlusPlugin ()
 @property(nonatomic, retain) NSObject<FlutterPluginRegistrar> *registrar;
 @property(nonatomic, retain) FlutterMethodChannel *channel;
@@ -61,6 +63,10 @@ typedef NS_ENUM(NSUInteger, LogLevel) {
   [registrar addMethodCallDelegate:instance channel:channel];
 }
 
++ (CBCentralManager *)getCBCentralManager{
+    return toOuterCentralManager;
+}
+
 - (void)handleMethodCall:(FlutterMethodCall*)call result:(FlutterResult)result {
   if ([@"setLogLevel" isEqualToString:call.method]) {
     NSNumber *logLevelIndex = [call arguments];
@@ -70,6 +76,7 @@ typedef NS_ENUM(NSUInteger, LogLevel) {
   }
   if (self.centralManager == nil) {
     self.centralManager = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
+    toOuterCentralManager = self.centralManager;
   }
   if ([@"state" isEqualToString:call.method]) {
     FlutterStandardTypedData *data = [self toFlutterData:[self toBluetoothStateProto:self->_centralManager.state]];

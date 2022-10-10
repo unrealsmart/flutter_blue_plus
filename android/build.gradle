@@ -63,5 +63,7 @@ protobuf {
 }
 
 dependencies {
+    implementation fileTree(dir: 'src/libs', include: ['*.jar'])
+    compileOnly fileTree(dir: 'src/libs', include: ['*.aar'])
     implementation 'com.google.protobuf:protobuf-javalite:3.18.0'
 }

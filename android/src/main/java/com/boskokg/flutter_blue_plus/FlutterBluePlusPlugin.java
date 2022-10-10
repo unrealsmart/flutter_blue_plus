@@ -32,9 +32,16 @@ import android.os.Looper;
 import android.os.ParcelUuid;
 import android.util.Log;
 
+import com.goodix.ble.gr.toolbox.app.libfastdfu.DfuProgressCallback;
+import com.goodix.ble.gr.toolbox.app.libfastdfu.EasyDfu2;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -72,7 +79,7 @@ public class FlutterBluePlusPlugin implements FlutterPlugin, MethodCallHandler, 
 
   private EventChannel stateChannel;
   private BluetoothManager mBluetoothManager;
-  private BluetoothAdapter mBluetoothAdapter;
+  public BluetoothAdapter mBluetoothAdapter;
 
   private FlutterPluginBinding pluginBinding;
   private ActivityPluginBinding activityBinding;
@@ -90,6 +97,10 @@ public class FlutterBluePlusPlugin implements FlutterPlugin, MethodCallHandler, 
 
   private final ArrayList<String> macDeviceScanned = new ArrayList<>();
   private boolean allowDuplicates = false;
+
+  private EventChannel dfuChannel;
+  EasyDfu2 dfu2;
+  private final Handler uiThreadHandler = new Handler(Looper.getMainLooper());
 
   public FlutterBluePlusPlugin() {}
 
@@ -144,6 +155,8 @@ public class FlutterBluePlusPlugin implements FlutterPlugin, MethodCallHandler, 
       channel.setMethodCallHandler(this);
       stateChannel = new EventChannel(messenger, NAMESPACE + "/state");
       stateChannel.setStreamHandler(stateHandler);
+      dfuChannel = new EventChannel(messenger, NAMESPACE + "/dfu");
+      dfuChannel.setStreamHandler(dfuHandler);
       mBluetoothManager = (BluetoothManager) application.getSystemService(Context.BLUETOOTH_SERVICE);
       mBluetoothAdapter = mBluetoothManager.getAdapter();
     }
@@ -157,13 +170,24 @@ public class FlutterBluePlusPlugin implements FlutterPlugin, MethodCallHandler, 
       channel = null;
       stateChannel.setStreamHandler(null);
       stateChannel = null;
+      dfuChannel.setStreamHandler(null);
+      dfuChannel = null;
       mBluetoothAdapter = null;
       mBluetoothManager = null;
     }
   }
 
+  private void refreshGatt(BluetoothGatt gattServer) {
+    try {
+      final Method refresh = gattServer.getClass().getMethod("refresh");
+      refresh.invoke(gattServer);
+    } catch (Exception e) {
+      Log.i(TAG, "Failed to refresh GATT service");
+    }
+  }
+
   @Override
-  public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+  public boolean onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
     OperationOnPermission operation = operationsOnPermission.get(requestCode);
     if (operation != null && grantResults.length > 0) {
       operation.op(grantResults[0] == PackageManager.PERMISSION_GRANTED, permissions[0]);
@@ -339,6 +363,7 @@ public class FlutterBluePlusPlugin implements FlutterPlugin, MethodCallHandler, 
           // If device was connected to previously but is now disconnected, attempt a reconnect
           BluetoothDeviceCache bluetoothDeviceCache = mDevices.get(deviceId);
           if(bluetoothDeviceCache != null && !isConnected) {
+            refreshGatt(bluetoothDeviceCache.gatt);
             if(bluetoothDeviceCache.gatt.connect()){
               result.success(null);
             } else {
@@ -703,6 +728,41 @@ public class FlutterBluePlusPlugin implements FlutterPlugin, MethodCallHandler, 
         break;
       }
 
+      case "startDFU":
+      {
+        final String[] data = ((String)call.arguments).split(",");
+        File file = new File(data[1]);
+        if (!new File(data[1]).exists()) {
+          result.error("FileNotExists", data[1], this);
+          break;
+        }
+        InputStream inputStream = null;
+        try {
+          inputStream = new FileInputStream(file);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+        if (inputStream != null) {
+          BluetoothDevice device = mBluetoothAdapter.getRemoteDevice(data[0]);
+          if (device == null) {
+            result.error("BluetoothDeviceFail", data[0], this);
+            break;
+          }
+          dfu2 = new EasyDfu2();
+          dfuChannel.setStreamHandler(dfuHandler);
+          dfu2.startDfuInCopyMode(context, device, inputStream, 0x1060000);
+        }
+        break;
+      }
+
+      case "stopDFU":
+      {
+        if (dfu2 != null) {
+          dfu2.cancel();
+        }
+        break;
+      }
+
       default:
       {
         result.notImplemented();
@@ -809,6 +869,75 @@ public class FlutterBluePlusPlugin implements FlutterPlugin, MethodCallHandler, 
     public void onCancel(Object o) {
       sink = null;
       context.unregisterReceiver(mReceiver);
+    }
+  };
+
+  private final StreamHandler dfuHandler = new StreamHandler() {
+    private EventSink eventSink;
+    final Map<String, String> map = new HashMap<>();
+
+    private final DfuProgressCallback mDfuProgressCallback = new DfuProgressCallback() {
+      @Override
+      public void onDfuStart() {
+        Log.d(TAG, "onDfuStart() called");
+        map.clear();
+        map.put("type", "start");
+        map.put("content", "OK");
+        uiThreadHandler.post(() -> eventSink.success(map));
+      }
+
+      @Override
+      public void onDfuProgress(int i) {
+        Log.d(TAG, "onDfuProgress() called with: i = [" + i + "]");
+        map.clear();
+        map.put("type", "progress");
+        map.put("content", String.valueOf(i));
+        uiThreadHandler.post(() -> eventSink.success(map));
+      }
+
+      @Override
+      public void onDfuComplete() {
+        Log.d(TAG, "onDfuComplete() called");
+        map.clear();
+        map.put("type", "finish");
+        map.put("content", "OK");
+        uiThreadHandler.post(() -> eventSink.success(map));
+        uiThreadHandler.post(() -> eventSink.endOfStream());
+      }
+
+      @Override
+      public void onDfuError(String s, Error error) {
+        Log.d(TAG, "onDfuError() called with: s = [" + s + "], error = [" + error + "]");
+        map.clear();
+        map.put("type", "error");
+        map.put("content", error.toString());
+        uiThreadHandler.post(() -> eventSink.success(map));
+        uiThreadHandler.post(() -> eventSink.endOfStream());
+      }
+    };
+
+    @Override
+    public void onListen(Object arguments, EventSink events) {
+      Log.i(TAG, "EventChannel onListen successful!");
+      eventSink = events;
+      if (dfu2 != null) {
+        dfu2.setListener(mDfuProgressCallback);
+      } else {
+        map.clear();
+        map.put("type", "error");
+        map.put("content", "NOT DFU2 OBJECT");
+        uiThreadHandler.post(() -> eventSink.success(map));
+        uiThreadHandler.post(() -> eventSink.endOfStream());
+      }
+    }
+
+    @Override
+    public void onCancel(Object arguments) {
+      map.clear();
+      map.put("type", "cancel");
+      map.put("content", "DFU2 CANCEL");
+      uiThreadHandler.post(() -> eventSink.success(map));
+      uiThreadHandler.post(() -> eventSink.endOfStream());
     }
   };
 
