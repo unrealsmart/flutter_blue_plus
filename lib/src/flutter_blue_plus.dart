@@ -175,14 +175,14 @@ class FlutterBluePlus {
         .map((buffer) => protos.ScanResult.fromBuffer(buffer))
         .map((p) {
       final result = ScanResult.fromProto(p);
-      final list = _scanResults.value;
-      int index = list.indexOf(result);
-      if (index != -1) {
-        list[index] = result;
-      } else {
-        list.add(result);
-      }
-      _scanResults.add(list);
+      // final list = _scanResults.value;
+      // int index = list.indexOf(result);
+      // if (index != -1) {
+      //   list[index] = result;
+      // } else {
+      //   list.add(result);
+      // }
+      _scanResults.add([result]);
       return result;
     });
   }
